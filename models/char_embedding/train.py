@@ -1,0 +1,177 @@
+import json
+import torch
+from torch.utils.data import DataLoader
+import random
+import os
+import argparse
+import time
+from pathlib import Path
+import sys
+
+# Import models
+path = os.path.dirname(os.path.abspath(__file__))
+path = Path(path)
+src_path = path.parent
+print("Add models path to sys paths - ", src_path)
+sys.path.append(str(src_path) + '/models/char_embedding/')
+from char_cnn_rnn import CharCnnRnn
+from multi_model_dataset import MultimodalDataset
+
+
+def train(json_path, output_path, learning_rate=0.001, img_tag='encod_64x64_path',
+          learning_rate_decay=0.1, batch_size=20, epochs=20,
+          symmetric=True, num_workers=1, model_type='fixed_gru', rnn_type='cvpr'):
+    ensure_folder(output_path)
+    # Train model
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # Create datasets loader
+    train_loader, test_loader = get_datasets(json_path, device, img_tag,
+                                             batch_size=batch_size, num_workers=num_workers)
+    # create Char-CNN-RNN model
+    model = CharCnnRnn(model_type, rnn_type)
+    print(f"CharCnnRnn created device:{device}")
+    optim = torch.optim.RMSprop(model.parameters(), lr=learning_rate)
+    # Adjust lr in progress
+    sched = torch.optim.lr_scheduler.ExponentialLR(optim, learning_rate_decay)
+    model.to(device)
+    model.train()
+    ###################
+    # train the model #
+    ###################
+    for epoch in range(epochs):
+        for i, data in enumerate(train_loader):
+            img = data['img']
+            txt = data['text']
+            feat_img = img.view(img.size(0), -1)
+            feat_txt = model(txt)
+            loss1, acc1 = sje_loss(feat_txt, feat_img)
+            loss2 = acc2 = 0
+            if symmetric:
+                loss2, acc2 = sje_loss(feat_img, feat_txt)
+            loss = loss1 + loss2
+            model.zero_grad()
+            loss.backward()
+            optim.step()
+
+        print(f"Epoch: {epoch} Loss: {loss}")
+        sched.step()
+    ######################
+    # evaluate the model #
+    ######################
+    model.eval()
+    eval_loss = 0
+    for data in test_loader:
+        img = data['img']
+        txt = data['text']
+        feat_img = img.view(img.size(0), -1)
+        feat_txt = model(txt)
+        loss1, acc1 = sje_loss(feat_txt, feat_img)
+        loss2 = acc2 = 0
+        if symmetric:
+            loss2, acc2 = sje_loss(feat_img, feat_txt)
+        loss = loss1 + loss2
+        # update evaluation loss
+        eval_loss += loss
+    eval_loss = eval_loss / len(test_loader)
+    print(f"Evaluation loss: {eval_loss}")
+    # Save model
+    model_root = output_path + '/char_embedding_' + str(time_msec()) + '.pt'
+    print(f"Saving trained model to: {model_root}")
+    torch.save(model.state_dict(), model_root)
+
+
+def ensure_folder(folder):
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+
+def time_msec():
+    return int(round(time.time() * 1000))
+
+
+def get_datasets(dataset_json_path, device, img_tag, split=0.8, batch_size=20, num_workers=1):
+    # Load data and create train and test datasets loaders
+    data_folder = os.path.dirname(dataset_json_path)
+    items = []
+    with open(dataset_json_path) as f:
+        dataset_json = json.load(f)
+        print(f"Load dataset size: {len(dataset_json)}")
+        for item in dataset_json:
+            items.append({'img': item['encod_64x64_path'], 'text': item['text']})
+        # Split train and test datasets
+        train_size = int(len(items) * split)
+        train_indx = random.sample(range(len(items)), k=train_size)
+        indx = [i for i in range(len(items))]
+        test_indx = list(set(indx) - set(train_indx))
+        train_dataset = [items[i] for i in train_indx]
+        test_dataset = [items[i] for i in test_indx]
+        print(f"Train : {len(train_dataset)} Test: {len(test_dataset)}")
+
+        print(f"Creating MultimodalDatasets from: {data_folder}")
+        train_data = MultimodalDataset(train_dataset, data_folder, device)
+        test_data = MultimodalDataset(test_dataset, data_folder, device)
+
+        print("MultimodalDatasets created!")
+        print("Creating dataloaders ...")
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
+                                  num_workers=num_workers, pin_memory=True)
+        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False,
+                                 num_workers=num_workers, pin_memory=True)
+        print("Dataloaders created!")
+        return train_loader, test_loader
+
+
+def sje_loss(feat1, feat2):
+    # Structured Joint Embedding Loss
+    # similarity score matrix (rows: fixed feat2, columns: fixed feat1)
+    scores = torch.matmul(feat2, feat1.t())  # (B, B)
+    # diagonal: matching pairs
+    diagonal = scores.diag().view(scores.size(0), 1)  # (B, 1)
+    # repeat diagonal scores on rows
+    diagonal = diagonal.expand_as(scores)  # (B, B)
+    # calculate costs
+    cost = (1 + scores - diagonal).clamp(min=0)  # (B, B)
+    # clear diagonals (matching pairs are not used in loss computation)
+    # cost[torch.eye(cost.size(0)).bool()] = 0 # (B, B) for torch==1.2.0
+    cost[torch.eye(cost.size(0), dtype=torch.uint8)] = 0  # (B, B)
+    # sum and average costs
+    denom = cost.size(0) * cost.size(1)
+    loss = cost.sum() / denom
+
+    # batch accuracy
+    max_ids = torch.argmax(scores, dim=1)
+    ground_truths = torch.LongTensor(range(scores.size(0))).to(feat1.device)
+    num_correct = (max_ids == ground_truths).sum().float()
+    accuracy = 100 * num_correct / cost.size(0)
+
+    return loss, accuracy
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Train embedding model on dataset.')
+    parser.add_argument('json_path', metavar='json_path', type=str,
+                        help='Source folder full path.')
+    parser.add_argument('output', metavar='output', type=str,
+                        help='Destination folder full path.')
+    parser.add_argument('lr', metavar='lt', type=str,
+                        help='Learning rate')
+    parser.add_argument('epochs', metavar='epochs', type=str,
+                        help='Number of training epochs.')
+    parser.add_argument('model_type', metavar='model_type', type=str,
+                        help='def fixed_gru|fixed_rnn')
+    parser.add_argument('rnn_type', metavar='rnn_type', type=str,
+                        help='def cvpr|icml')
+
+    args = parser.parse_args()
+    json_path = args.json_path
+    output_folder = args.output
+    lr = args.lr
+    epochs = args.epochs
+    model_type = args.model_type
+    rnn_type = args.rnn_type
+    train(json_path=json_path, output_path=output_folder, learning_rate=float(lr), epochs=int(epochs), model_type=model_type, rnn_type=rnn_type)
+
+
+if __name__ == '__main__':
+    print("<<<<<<<<<<<<<<< Start training >>>>>>>>>>>>>>>>>")
+    main()
