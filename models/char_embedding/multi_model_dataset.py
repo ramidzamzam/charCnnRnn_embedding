@@ -18,8 +18,8 @@ class MultimodalDataset(Dataset):
             image = torch.load(data_folder + item['img'])
             image.requires_grad = False
             text = prepare_text(item['text'])
-            image.to(self.device)
-            text.to(self.device)
+            image = image.to(self.device)
+            text = text.to(self.device)
             self.data.append({'img': image, 'text': text})
 
     def __len__(self):

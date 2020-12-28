@@ -24,9 +24,15 @@ def train(json_path, output_path, learning_rate=0.001, img_tag='encod_64x64_path
     ensure_folder(output_path)
     # Train model
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     # Create datasets loader
-    train_loader, test_loader = get_datasets(json_path, device, img_tag,
-                                             batch_size=batch_size, num_workers=num_workers)
+    train_data, test_data = get_datasets(json_path, device)
+    print("Creating dataloaders ...")
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers)
+    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False,
+                             num_workers=num_workers)
+    print("Dataloaders created!")
     # create Char-CNN-RNN model
     model = CharCnnRnn(model_type, rnn_type)
     print(f"CharCnnRnn created device:{device}")
@@ -89,7 +95,7 @@ def time_msec():
     return int(round(time.time() * 1000))
 
 
-def get_datasets(dataset_json_path, device, img_tag, split=0.8, batch_size=20, num_workers=1):
+def get_datasets(dataset_json_path, device, split=0.8):
     # Load data and create train and test datasets loaders
     data_folder = os.path.dirname(dataset_json_path)
     items = []
@@ -112,13 +118,8 @@ def get_datasets(dataset_json_path, device, img_tag, split=0.8, batch_size=20, n
         test_data = MultimodalDataset(test_dataset, data_folder, device)
 
         print("MultimodalDatasets created!")
-        print("Creating dataloaders ...")
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
-                                  num_workers=num_workers, pin_memory=True)
-        test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False,
-                                 num_workers=num_workers, pin_memory=True)
-        print("Dataloaders created!")
-        return train_loader, test_loader
+
+        return train_data, test_data
 
 
 def sje_loss(feat1, feat2):
