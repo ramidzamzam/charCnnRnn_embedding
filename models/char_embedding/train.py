@@ -26,7 +26,7 @@ def train(json_path, output_path, learning_rate=0.001, img_tag='encod_64x64_path
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Create datasets loader
-    train_data, test_data = get_datasets(json_path, device)
+    train_data, test_data = get_datasets(json_path, device, img_tag)
     print("Creating dataloaders ...")
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
                               num_workers=num_workers)
@@ -95,7 +95,7 @@ def time_msec():
     return int(round(time.time() * 1000))
 
 
-def get_datasets(dataset_json_path, device, split=0.8):
+def get_datasets(dataset_json_path, device, split=0.8, img_tag='encod_64x64_path'):
     # Load data and create train and test datasets loaders
     data_folder = os.path.dirname(dataset_json_path)
     items = []
@@ -103,7 +103,7 @@ def get_datasets(dataset_json_path, device, split=0.8):
         dataset_json = json.load(f)
         print(f"Load dataset size: {len(dataset_json)}")
         for item in dataset_json:
-            items.append({'img': item['encod_64x64_path'], 'text': item['text']})
+            items.append({'img': item[img_tag], 'text': item['text']})
         # Split train and test datasets
         train_size = int(len(items) * split)
         train_indx = random.sample(range(len(items)), k=train_size)
@@ -162,6 +162,8 @@ def main():
                         help='def fixed_gru|fixed_rnn')
     parser.add_argument('rnn_type', metavar='rnn_type', type=str,
                         help='def cvpr|icml')
+    parser.add_argument('img_tag', metavar='img_tag', type=str,
+                        help='def img_64x64_path|img_256x256_path')
 
     args = parser.parse_args()
     json_path = args.json_path
@@ -170,7 +172,8 @@ def main():
     epochs = args.epochs
     model_type = args.model_type
     rnn_type = args.rnn_type
-    train(json_path=json_path, output_path=output_folder, learning_rate=float(lr), epochs=int(epochs), model_type=model_type, rnn_type=rnn_type)
+    img_tag = args.img_tag
+    train(json_path=json_path, output_path=output_folder, learning_rate=float(lr), epochs=int(epochs), model_type=model_type, rnn_type=rnn_type, img_tag=img_tag)
 
 
 if __name__ == '__main__':
