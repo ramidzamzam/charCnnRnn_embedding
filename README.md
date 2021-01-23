@@ -20,5 +20,9 @@ The generated output text embedding tensors' files can be used as input to [stac
     "encod_64x64_path": "/enc_64x64_images/enc_64x64_1609088299704.pt",
     "encod_256x256_path": "/enc_256x256_images/enc_256x256_1609088299704.pt"
     }, ...]
-    ```
+    ``` <br>
+3. Finally, data_prep.py using the previous trained models to generate the embedding files. Find command example. <br>
+   run ``` python data_prep.py .../GAN_dataset .../projects .../conv_autoencoder_1608844546780.pt .../char_embedding_1609010245909.pt```<br>
+
+(1) and (2) training data prep code is used in the data_prep.py script. 
 
